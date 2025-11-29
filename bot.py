@@ -5,20 +5,23 @@ from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 import telebot
+from flask import Flask, request
 
-# .env에서 토큰 불러오기
+# --------------------
+# 환경 변수 / 기본 설정
+# --------------------
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN이 .env에 설정되어 있지 않습니다!")
+    raise RuntimeError("BOT_TOKEN이 환경변수나 .env에 설정되어 있지 않습니다!")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
 # (chat_id, user_id) -> deadline(UTC 시간)
 pending_users = {}
 
-# 제한 시간 (분 단위) - ★ 1분으로 설정 ★
+# 제한 시간 (분 단위)
 TIME_LIMIT_MINUTES = 1
 
 
@@ -80,7 +83,7 @@ def handle_photos(message: telebot.types.Message):
 
 
 def timeout_worker():
-    """제한 시간 지나면 자동 강퇴"""
+    """제한 시간 지나면 자동 강퇴 (주기적으로 pending_users 검사)"""
     while True:
         time.sleep(10)  # 10초마다 확인
         now = utc_now()
@@ -110,12 +113,35 @@ def timeout_worker():
                 print(f"[ERROR] 강퇴 실패 chat_id={chat_id}, user_id={user_id}, err={e}")
 
 
+# --------------------
+# Flask Webhook 서버
+# --------------------
+app = Flask(__name__)
+
+
+@app.route("/", methods=["GET"])
+def index():
+    return "ICU bot OK", 200
+
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    """텔레그램이 보내는 업데이트를 받는 엔드포인트"""
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "OK", 200
+
+
 def main():
+    # 강퇴 스레드 시작
     t = threading.Thread(target=timeout_worker, daemon=True)
     t.start()
 
-    print("봇 실행 중... Ctrl + C 로 종료 가능합니다.")
-    bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    # Flask 앱 실행 (Render가 PORT 환경변수를 내려줌)
+    port = int(os.getenv("PORT", 5000))
+    print(f"웹훅 서버 실행 중... PORT={port}")
+    app.run(host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":
